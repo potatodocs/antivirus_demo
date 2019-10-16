@@ -1,41 +1,52 @@
+'''
+learning.py
+Learning malicious files and legitimate files
+'''
+
 import pandas as pd
 import numpy as np
 import pickle
 import sklearn.ensemble as ske
-from sklearn import cross_validation, tree, linear_model
+from sklearn import tree
+import joblib
+import sklearn.linear_model
+from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.feature_selection import SelectFromModel
-from sklearn.externals import joblib
 from sklearn.naive_bayes import GaussianNB
 from sklearn.metrics import confusion_matrix
 
+#Loading the initial dataset delimited by '|'
 data = pd.read_csv('data.csv', sep='|')
+print(data.head())
+print(data.describe())
+
+
+# Dropping columns like Name of the file, MD5 (message digest) and label
 X = data.drop(['Name', 'md5', 'legitimate'], axis=1).values
 y = data['legitimate'].values
 
 print('Researching important feature based on %i total features\n' % X.shape[1])
 
 # Feature selection using Trees Classifier
-fsel = ske.ExtraTreesClassifier().fit(X, y)
-model = SelectFromModel(fsel, prefit=True)
+extratrees = ske.ExtraTreesClassifier().fit(X, y)
+model = SelectFromModel(extratrees, prefit=True)
 X_new = model.transform(X)
 nb_features = X_new.shape[1]
 
-X_train, X_test, y_train, y_test = cross_validation.train_test_split(X_new, y ,test_size=0.2)
+X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(X_new, y ,test_size=0.2)
 
 features = []
-
 print('%i features identified as important:' % nb_features)
+indices = np.argsort(extratrees.feature_importances_)[::-1][:nb_features]
 
-indices = np.argsort(fsel.feature_importances_)[::-1][:nb_features]
 for f in range(nb_features):
-    print("%d. feature %s (%f)" % (f + 1, data.columns[2+indices[f]], fsel.feature_importances_[indices[f]]))
+    print("%d. feature %s (%f)" % (f + 1, data.columns[2+indices[f]], extratrees.feature_importances_[indices[f]]))
 
-# XXX : take care of the feature order
-for f in sorted(np.argsort(fsel.feature_importances_)[::-1][:nb_features]):
+for f in sorted(np.argsort(extratrees.feature_importances_)[::-1][:nb_features]):
     features.append(data.columns[2+f])
 
-#Algorithm comparison
-algorithms = {
+#Building the below Machine Learning model
+model = {
         "DecisionTree": tree.DecisionTreeClassifier(max_depth=10),
         "RandomForest": ske.RandomForestClassifier(n_estimators=50),
         "GradientBoosting": ske.GradientBoostingClassifier(n_estimators=50),
@@ -43,10 +54,12 @@ algorithms = {
         "GNB": GaussianNB()
     }
 
+#Training each of the model with the X_train and testing with X_test. The model with best accuracy will be ranked as winner
 results = {}
-print("\nNow testing algorithms")
-for algo in algorithms:
-    clf = algorithms[algo]
+print("\nNow testing model")
+
+for algo in model:
+    clf = model[algo]
     clf.fit(X_train, y_train)
     score = clf.score(X_test, y_test)
     print("%s : %f %%" % (algo, score*100))
@@ -55,14 +68,15 @@ for algo in algorithms:
 winner = max(results, key=results.get)
 print('\nWinner algorithm is %s with a %f %% success' % (winner, results[winner]*100))
 
-# Save the algorithm and the feature list for later predictions
+# Save the model and the feature list for later predictions
 print('Saving algorithm and feature list in classifier directory...')
-joblib.dump(algorithms[winner], 'classifier/classifier.pkl')
-open('classifier/features.pkl', 'w').write(pickle.dumps(features))
+joblib.dump(model[winner], 'classifier/classifier.pkl')
+with open('classifier/features.pkl', 'wb') as f:
+    f.write(pickle.dumps(features))
 print('Saved')
 
 # Identify false and true positive rates
-clf = algorithms[winner]
+clf = model[winner]
 res = clf.predict(X_test)
 mt = confusion_matrix(y_test, res)
 print("False positive rate : %f %%" % ((mt[0][1] / float(sum(mt[0])))*100))
